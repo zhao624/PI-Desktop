@@ -2,6 +2,7 @@ mod config_sync_rpc;
 mod scheduled_rpc;
 mod scheduled_tools;
 mod todos;
+mod window_corner_rpc;
 
 use std::io::{self, BufRead, BufReader as StdBufReader, Read, Write};
 use std::path::{Path, PathBuf};
@@ -1084,6 +1085,15 @@ fn validate_settings_value(value: &Value) -> Result<(), JsonRpcError> {
             ));
         }
     }
+    if let Some(vibrancy) = object.get("macosSidebarVibrancy") {
+        if !vibrancy.is_boolean() {
+            return Err(rpc_err(
+                1002,
+                "macosSidebarVibrancy must be a boolean",
+                "INVALID_PARAMS",
+            ));
+        }
+    }
     if let Some(threshold_value) = object.get("largePasteThreshold") {
         let Some(threshold) = threshold_value.as_i64() else {
             return Err(rpc_err(
@@ -1823,6 +1833,7 @@ async fn handle_request(
                 }
             }))
         }
+        "window.setNativeCornerPreference" => window_corner_rpc::handle(params),
         "keyboard.setGlobalShortcut" => {
             let binding = params
                 .get("binding")
@@ -6992,6 +7003,32 @@ mod tests {
         .await
         .unwrap_err();
         assert_eq!(invalid_power.data.unwrap()["errorCode"], "INVALID_PARAMS");
+        handle_request(
+            state.clone(),
+            "settings.set",
+            json!({ "macosSidebarVibrancy": false }),
+            tx.clone(),
+        )
+        .await
+        .unwrap();
+        let vibrancy_settings =
+            handle_request(state.clone(), "settings.get", json!({}), tx.clone())
+                .await
+                .unwrap();
+        assert_eq!(vibrancy_settings["macosSidebarVibrancy"], false);
+
+        let invalid_vibrancy = handle_request(
+            state.clone(),
+            "settings.set",
+            json!({ "macosSidebarVibrancy": "no" }),
+            tx.clone(),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(
+            invalid_vibrancy.data.unwrap()["errorCode"],
+            "INVALID_PARAMS"
+        );
 
         let invalid_retry = handle_request(
             state.clone(),

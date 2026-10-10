@@ -20,9 +20,9 @@ import {
 } from "../work-panel-window";
 import {
   DEFAULT_WINDOW_CORNER_RADIUS,
-  setWindowCornerRadius,
 } from "../window-shape";
-import { applyMainWindowBackground } from "../window-background";
+import { applyWindowCornerRadius, usesWindows11NativeCorners } from "../window-native-corners";
+import { applyMainWindowBackground, toElectronBackgroundColor } from "../window-background";
 import type { IpcRegistrar } from "./types";
 
 export type WindowIpcDependencies = {
@@ -37,7 +37,9 @@ export type WindowIpcDependencies = {
   markMenuRendererReady: (window: BrowserWindow) => boolean;
   executeNativeMenuAction: (action: NativeMenuAction) => unknown;
   setTraySessionPreferences: (preferences: TraySessionPreferences) => Promise<void>;
+  isMacosSidebarVibrancyEnabled: () => boolean;
 };
+
 
 /** Register renderer-drawn window chrome and work-panel geometry channels. */
 export function registerWindowIpc({
@@ -52,6 +54,7 @@ export function registerWindowIpc({
   markMenuRendererReady,
   executeNativeMenuAction,
   setTraySessionPreferences,
+  isMacosSidebarVibrancyEnabled,
 }: WindowIpcDependencies): void {
   const { handle, handleWithEvent } = registrar;
   handleWithEvent(IPC.invoke.traySetSessionPreferences, async (event, input: unknown) => {
@@ -128,7 +131,10 @@ export function registerWindowIpc({
         errorCode: ErrorCodes.INVALID_ARGUMENT,
       });
     }
-    if (process.platform === "darwin") return { applied: false, theme };
+    if (
+      process.platform === "darwin" &&
+      isMacosSidebarVibrancyEnabled()
+    ) return { applied: false, theme };
     const mainWindow = getMainWindow();
     if (!mainWindow || mainWindow.isDestroyed()) {
       throw new Error("main window unavailable");
@@ -136,13 +142,29 @@ export function registerWindowIpc({
     const color = isWindowBackgroundColor(requested)
       ? requested
       : builtinWindowBackground(theme);
+    const windows11NativeCorners = process.platform === "win32" && usesWindows11NativeCorners(
+      process.platform,
+      process.getSystemVersion(),
+    );
+    if (process.platform === "darwin") {
+      // The shared painter leaves the native glass plate alone. This branch
+      // runs only when sidebar vibrancy is disabled and the window is opaque.
+      mainWindow.setBackgroundColor(toElectronBackgroundColor(color));
+    } else {
+      applyMainWindowBackground(
+        mainWindow,
+        process.platform,
+        color,
+        windows11NativeCorners,
+        builtinWindowBackground(theme),
+      );
+    }
     const cornerRadius = process.platform === "win32"
-      ? setWindowCornerRadius(
+      ? await applyWindowCornerRadius(
           mainWindow,
           typeof requestedRadius === "number" ? requestedRadius : DEFAULT_WINDOW_CORNER_RADIUS,
         )
       : null;
-    applyMainWindowBackground(mainWindow, process.platform, color);
     return { applied: true, theme, color, cornerRadius };
   });
 

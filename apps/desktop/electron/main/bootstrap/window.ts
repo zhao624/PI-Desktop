@@ -35,6 +35,10 @@ import { readWindowState, writeWindowState } from "../window-preferences";
 import { suppressLinuxFramelessSystemMenu } from "../frameless-system-menu";
 import { isWindowFullScreen } from "../window-fullscreen";
 import { DEFAULT_WINDOW_CORNER_RADIUS, installWindowShape } from "../window-shape";
+import {
+  installWindows11CornerController,
+  usesWindows11NativeCorners,
+} from "../window-native-corners";
 import { applyMainWindowBackground, mainWindowBackgroundOptions } from "../window-background";
 import { recoverRendererAfterGone } from "../renderer-recovery";
 
@@ -70,6 +74,8 @@ export type WindowLifecycleState = {
   tray: Tray | null;
   closeBehavior: CloseBehavior;
   developerMode: boolean;
+  /** macOS sidebar glass. False skips vibrancy and the transparent backing. */
+  macosSidebarVibrancy: boolean;
   pluginLauncherWindow: BrowserWindow | null;
   host: HostProcess | null;
 };
@@ -167,6 +173,10 @@ export async function createWindow({
   const initialWindowBackground = builtinWindowBackground(
     nativeTheme.shouldUseDarkColors ? "dark" : "light",
   );
+  const windows11NativeCorners = usesWindows11NativeCorners(
+    process.platform,
+    process.getSystemVersion(),
+  );
   windowState.mainWindow = new BrowserWindow({
     ...(restoredBounds ?? { width: 1200, height: 800 }),
     minWidth: initialMinWidth,
@@ -183,18 +193,31 @@ export async function createWindow({
     // the renderer reserves for the buttons (styles/tokens.css) is derived
     // from the same numbers that place them.
     ...(process.platform === "darwin"
-      ? {
-          titleBarStyle: "hiddenInset" as const,
-          trafficLightPosition: MAC_TRAFFIC_LIGHT_POSITION,
-          vibrancy: "sidebar" as const,
-          visualEffectState: "followWindow" as const,
-          transparent: true,
-          backgroundColor: "#00000000",
-        }
+      ? windowState.macosSidebarVibrancy
+        ? {
+            titleBarStyle: "hiddenInset" as const,
+            trafficLightPosition: MAC_TRAFFIC_LIGHT_POSITION,
+            vibrancy: "sidebar" as const,
+            visualEffectState: "followWindow" as const,
+            transparent: true,
+            backgroundColor: "#00000000",
+          }
+        : {
+            titleBarStyle: "hiddenInset" as const,
+            trafficLightPosition: MAC_TRAFFIC_LIGHT_POSITION,
+            backgroundColor: builtinWindowBackground(
+              nativeTheme.shouldUseDarkColors ? "dark" : "light",
+            ),
+          }
       : {
           frame: false,
           ...(process.platform === "win32" ? { thickFrame: false } : {}),
-          ...mainWindowBackgroundOptions(process.platform, initialWindowBackground),
+          ...mainWindowBackgroundOptions(
+            process.platform,
+            initialWindowBackground,
+            windows11NativeCorners,
+            initialWindowBackground,
+          ),
         }),
     ...(process.platform === "win32"
       ? {
@@ -214,9 +237,25 @@ export async function createWindow({
   });
   const window = windowState.mainWindow;
   if (process.platform === "win32") {
-    installWindowShape(window, DEFAULT_WINDOW_CORNER_RADIUS, screen);
+    if (windows11NativeCorners) {
+      await installWindows11CornerController(
+        window,
+        DEFAULT_WINDOW_CORNER_RADIUS,
+        () => windowState.host,
+        screen,
+        logger,
+      );
+    } else {
+      installWindowShape(window, DEFAULT_WINDOW_CORNER_RADIUS, screen);
+    }
   }
-  applyMainWindowBackground(window, process.platform, initialWindowBackground);
+  applyMainWindowBackground(
+    window,
+    process.platform,
+    initialWindowBackground,
+    windows11NativeCorners,
+    initialWindowBackground,
+  );
   suppressLinuxFramelessSystemMenu(window);
   const initialBounds = window.getBounds();
   windowState.workPanelBaseBounds = restoredBounds
